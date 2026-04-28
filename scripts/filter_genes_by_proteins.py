@@ -294,6 +294,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     rule.add_argument("--rule", choices=["adaptive", "fixed"], default="adaptive",
                       help="adaptive (default): pick rule by median pident; "
                            "fixed: use the thresholds below")
+
     rule.add_argument("--pident-min",   type=float, default=0.0)
     rule.add_argument("--qcov-min",     type=float, default=0.0)
     rule.add_argument("--tcov-min",     type=float, default=0.0)
