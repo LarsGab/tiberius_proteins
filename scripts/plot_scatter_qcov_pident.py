@@ -109,15 +109,19 @@ def _panel_data(
     hits: dict[str, tuple[float, float]],
     labels: dict[str, str],
     all_ids: set[str],
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
-    """Return (tp_pident, tp_qcov, fp_pident, fp_qcov, n_no_hit)."""
-    n_no_hit = sum(1 for t in all_ids if t not in hits)
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int, int]:
+    """Return (tp_pident, tp_qcov, fp_pident, fp_qcov, n_nohit_tp, n_nohit_fp)."""
     tp_pi, tp_qc, fp_pi, fp_qc = [], [], [], []
+    n_nohit_tp = n_nohit_fp = 0
     for tid in all_ids:
+        is_tp = labels.get(tid, "u") in TP_CLASS_CODES
         if tid not in hits:
+            if is_tp:
+                n_nohit_tp += 1
+            else:
+                n_nohit_fp += 1
             continue
         pident, qcov = hits[tid]
-        is_tp = labels.get(tid, "u") in TP_CLASS_CODES
         if is_tp:
             tp_pi.append(pident)
             tp_qc.append(qcov)
@@ -126,7 +130,7 @@ def _panel_data(
             fp_qc.append(qcov)
     return (np.array(tp_pi), np.array(tp_qc),
             np.array(fp_pi), np.array(fp_qc),
-            n_no_hit)
+            n_nohit_tp, n_nohit_fp)
 
 
 def plot_scatter(
@@ -175,7 +179,7 @@ def plot_scatter(
             ax = axes[row][col]
             hits = hit_lookup.get((species, level), {})
 
-            tp_pi, tp_qc, fp_pi, fp_qc, n_no_hit = _panel_data(
+            tp_pi, tp_qc, fp_pi, fp_qc, n_nohit_tp, n_nohit_fp = _panel_data(
                 hits, labels, all_ids
             )
 
@@ -189,7 +193,8 @@ def plot_scatter(
             n_fp = len(fp_pi)
             title = (
                 f"{SPECIES_LABEL.get(species, species)}  [{level}]\n"
-                f"TP={n_tp:,}  FP={n_fp:,}  no-hit={n_no_hit:,}"
+                f"hit  TP={n_tp:,}  FP={n_fp:,}\n"
+                f"no-hit  TP={n_nohit_tp:,}  FP={n_nohit_fp:,}"
             )
             ax.set_title(title, fontsize=8)
             ax.set_xlim(-2, 102)
