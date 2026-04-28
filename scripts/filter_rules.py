@@ -109,6 +109,8 @@ class AdaptiveRule:
 
     rule_close: FilterRule = field(default_factory=lambda: FilterRule(
         name="close",
+        pident_min=50.0,
+        qcov_min=90.0,
         evalue_max=1e-5,
     ))
     rule_medium: FilterRule = field(default_factory=lambda: FilterRule(
