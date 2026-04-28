@@ -88,10 +88,13 @@ def extract_peptides(
     tmp = out_fa.with_suffix(".tmp.fa")
     _run(["gffread", "-y", str(tmp), "-g", str(genome), str(gtf)])
 
-    # strip stop-codon asterisks; Diamond rejects them
+    # strip stop-codon asterisks and gffread masked-residue dots; Diamond rejects both
     with open(tmp) as fin, open(out_fa, "w") as fout:
         for line in fin:
-            fout.write(line.replace("*", ""))
+            if line.startswith(">"):
+                fout.write(line)
+            else:
+                fout.write(line.replace("*", "").replace(".", ""))
     tmp.unlink()
     return out_fa
 
