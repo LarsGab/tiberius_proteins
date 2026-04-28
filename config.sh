@@ -76,7 +76,27 @@ declare -A EXCL_TAXON=(
     [Phaeodactylum_tricornutum_3]=33634
 )
 
+# ── Clade lookup (used by miniprot pipeline to find genome paths) ─────────────
+declare -A SPECIES_CLADE=(
+    [Drosophila_melanogaster]="Insecta"
+    [Homo_sapiens]="Mammalia"
+    [Arabidopsis_thaliana]="Embryophyta"
+    [Phaeodactylum_tricornutum]="Diatoms"
+)
+
+# ── Miniprot / protein-evidence pipeline ──────────────────────────────────────
+# Path to local Tiberius repo checkout on the cluster (for blosum62.csv)
+TIBERIUS_REPO=/home/gabriell/Tiberius
+
+# Scoring matrix for miniprot_boundary_scorer
+SCORING_MATRIX="$TIBERIUS_REPO/conf/blosum62.csv"
+
+# Singularity image that bundles miniprot, miniprot_boundary_scorer, miniprothint.py
+# Leave empty to call tools directly from PATH instead.
+TIBERIUS_SIF="docker://larsgabriel23/tiberius:2.0.2"
+
 # ── SLURM defaults (override per-job as needed) ───────────────────────────────
 SLURM_ACCOUNT=""          # leave empty to use cluster default
 SLURM_PARTITION=""        # leave empty to use cluster default
 DIAMOND_THREADS=16
+MINIPROT_THREADS=16
