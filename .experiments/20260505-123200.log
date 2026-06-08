@@ -1,0 +1,10 @@
+# insects pipeline submission — 2026-05-05
+# host: brain  user: gabriell  remote: /home/gabriell/tiberius_proteins
+7283315  step=1  name=ins_filter_odb        cmd=slurm/insects/01_filter_odb.sh
+7283316  step=2  name=ins_extract_peptides  cmd=slurm/insects/02_extract_peptides.sh  state=COMPLETED
+7283317  step=3  name=ins_diamond           cmd=slurm/insects/03_diamond.sh            dep=afterok:7283315,afterok:7283316
+7283318  step=4  name=ins_parse_labels      cmd=slurm/insects/04_parse_labels.sh       state=COMPLETED
+7283319  step=5  name=ins_analyze           cmd=slurm/insects/05_analyze.sh            dep=afterok:7283317,afterok:7283318
+7283320  step=6  name=ins_miniprot          cmd=slurm/insects/06_miniprot.sh           dep=afterok:7283316,afterok:7283315
+7283348  step=7  name=ins_miniprot_gffcmp   cmd=slurm/insects/07_miniprot_gffcmp.sh   dep=afterok:7283320,afterok:7283318
+7283349  step=8  name=ins_analyze_miniprot  cmd=slurm/insects/08_analyze_miniprot.sh  dep=afterok:7283348

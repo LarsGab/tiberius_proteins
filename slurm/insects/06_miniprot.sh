@@ -1,30 +1,21 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=miniprot
-#SBATCH --array=0-11
+#SBATCH --job-name=ins_miniprot
+#SBATCH --array=0-9
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
 #SBATCH --time=24:00:00
-#SBATCH --output=logs/06_miniprot_%A_%a.log
+#SBATCH --output=logs/ins_06_miniprot_%A_%a.log
 
-# 12 tasks: 4 species × 3 exclusion levels.
-# For each task:
-#   0. preprocess_proteindb – Diamond-filter the ODB FASTA to top-N species
-#                             (only when DB > 1,000,000 sequences)
-#   1. miniprot             – spliced protein-to-genome alignment -> miniprot.aln
-#   2. miniprot_boundary_scorer                                   -> miniprot_parsed.gff
-#   3. miniprothint.py                                            -> miniprot.gtf
-#                                                                    miniprot_trainingGenes.gff
-
+# 10 tasks: 10 insects × 1 level (order).
+# Mirrors slurm/06_miniprot.sh including the Diamond pre-filter step.
 set -euo pipefail
-# Load modules so singularity is available in batch jobs
 source /etc/profile.d/modules.sh
 module load singularity/3.11.3
-source "${REPO_DIR}/config.sh"
+source "${REPO_DIR}/config_insects.sh"
 
 TASKS=()
-for entry in "${SPECIES_LIST[@]}"; do
-    SPECIES="${entry%%:*}"
-    for LEVEL in 1 2 3; do
+for SPECIES in "${INSECTS_SPECIES_LIST[@]}"; do
+    for LEVEL in "${INSECTS_LEVELS[@]}"; do
         TASKS+=("${SPECIES}:${LEVEL}")
     done
 done
@@ -40,10 +31,7 @@ PROTEINS="$WORK_DIR/odb/filtered/${SPECIES}_excl_${LEVEL_LABEL}.fa"
 TIBERIUS_PEPTIDES="$WORK_DIR/peptides/${SPECIES}.pep.fa"
 OUT_DIR="$WORK_DIR/miniprot/${SPECIES}_excl_${LEVEL_LABEL}"
 
-echo "[miniprot] Species=$SPECIES  Level=$LEVEL_LABEL  Clade=$CLADE"
-echo "[miniprot] Genome   : $GENOME"
-echo "[miniprot] Proteins : $PROTEINS"
-echo "[miniprot] Out dir  : $OUT_DIR"
+echo "[ins_miniprot] Species=$SPECIES  Level=$LEVEL_LABEL  Clade=$CLADE"
 
 for f in "$GENOME" "$PROTEINS" "$SCORING_MATRIX" "$TIBERIUS_PEPTIDES"; do
     [[ -f "$f" ]] || { echo "ERROR: file not found: $f"; exit 1; }
@@ -51,7 +39,6 @@ done
 
 mkdir -p "$OUT_DIR"
 
-# Helper: run with or without Singularity
 run_tool() {
     if [[ -n "${TIBERIUS_SIF:-}" ]]; then
         singularity exec "$TIBERIUS_SIF" "$@"
@@ -61,18 +48,15 @@ run_tool() {
 }
 
 # ── Step 0: preprocess protein DB ────────────────────────────────────────────
-# Mirror PREPROCESS_PROTEINDB from protein_evidence.nf:
-# if the ODB FASTA has > 1,000,000 sequences, use Diamond to find the top-N
-# best-matching species from the Tiberius predictions and keep only those.
 PROTEINS_FOR_MINIPROT="$PROTEINS"
 PREPROCESSED_FA="$OUT_DIR/protein_preprocessed.fa"
 
 if [[ ! -f "$PREPROCESSED_FA" ]]; then
     N_PROT=$(grep -c '^>' "$PROTEINS" || echo 0)
-    echo "[miniprot] ODB FASTA has $N_PROT sequences"
+    echo "[ins_miniprot] ODB FASTA has $N_PROT sequences"
 
     if [[ "$N_PROT" -gt 1000000 ]]; then
-        echo "[miniprot] > 1,000,000 proteins – running Diamond soft filter ..."
+        echo "[ins_miniprot] > 1,000,000 proteins – running Diamond soft filter ..."
 
         DIAMOND_DB="$OUT_DIR/prot_db"
         DIAMOND_HITS="$OUT_DIR/diamond_preprocess.tsv"
@@ -92,17 +76,15 @@ if [[ ! -f "$PREPROCESSED_FA" ]]; then
             --very-sensitive \
             --threads "$MINIPROT_THREADS"
 
-        # Rank species by number of query hits and write top_species.txt
         pushd "$OUT_DIR" > /dev/null
         python3 "$TIBERIUS_REPO/tiberius/scripts/rank_species_from_diamond.py" \
             "$DIAMOND_HITS" 13 \
             > "$OUT_DIR/species_rank.tsv"
         popd > /dev/null
 
-        echo "[miniprot] Top species selected:"
+        echo "[ins_miniprot] Top species selected:"
         cat "$OUT_DIR/top_species.txt"
 
-        # Filter ODB FASTA to only sequences from the top species
         awk '
         BEGIN {
             while ((getline < "'"$OUT_DIR/top_species.txt"'") > 0) {
@@ -121,22 +103,22 @@ if [[ ! -f "$PREPROCESSED_FA" ]]; then
         ' "$PROTEINS" > "$PREPROCESSED_FA"
 
         N_FILT=$(grep -c '^>' "$PREPROCESSED_FA" || echo 0)
-        echo "[miniprot] Filtered DB: $N_PROT -> $N_FILT sequences"
+        echo "[ins_miniprot] Filtered DB: $N_PROT -> $N_FILT sequences"
         PROTEINS_FOR_MINIPROT="$PREPROCESSED_FA"
     else
-        echo "[miniprot] <= 1,000,000 proteins – using full DB."
+        echo "[ins_miniprot] <= 1,000,000 proteins – using full DB."
         ln -sf "$PROTEINS" "$PREPROCESSED_FA"
         PROTEINS_FOR_MINIPROT="$PREPROCESSED_FA"
     fi
 else
-    echo "[miniprot] Preprocessed DB exists, reusing: $PREPROCESSED_FA"
+    echo "[ins_miniprot] Preprocessed DB exists, reusing."
     PROTEINS_FOR_MINIPROT="$PREPROCESSED_FA"
 fi
 
-echo "[miniprot] Proteins for alignment: $PROTEINS_FOR_MINIPROT"
+echo "[ins_miniprot] Proteins for alignment: $PROTEINS_FOR_MINIPROT"
 
 # ── Step 1: miniprot alignment ────────────────────────────────────────────────
-echo "[miniprot] Running miniprot ..."
+echo "[ins_miniprot] Running miniprot ..."
 run_tool miniprot \
     -t "$MINIPROT_THREADS" \
     --aln \
@@ -144,19 +126,17 @@ run_tool miniprot \
     "$PROTEINS_FOR_MINIPROT" \
     > "$OUT_DIR/miniprot.aln"
 
-echo "[miniprot] miniprot done: $(wc -l < "$OUT_DIR/miniprot.aln") lines"
+echo "[ins_miniprot] miniprot done: $(wc -l < "$OUT_DIR/miniprot.aln") lines"
 
 # ── Step 2: boundary scorer ───────────────────────────────────────────────────
-echo "[miniprot] Running miniprot_boundary_scorer ..."
+echo "[ins_miniprot] Running miniprot_boundary_scorer ..."
 run_tool miniprot_boundary_scorer \
     -s "$SCORING_MATRIX" \
     -o "$OUT_DIR/miniprot_parsed.gff" \
     < "$OUT_DIR/miniprot.aln"
 
-echo "[miniprot] boundary scorer done: $(wc -l < "$OUT_DIR/miniprot_parsed.gff") GFF lines"
-
 # ── Step 3: miniprothint ──────────────────────────────────────────────────────
-echo "[miniprot] Running miniprothint.py ..."
+echo "[ins_miniprot] Running miniprothint.py ..."
 pushd "$OUT_DIR" > /dev/null
 run_tool miniprothint.py \
     miniprot_parsed.gff \
@@ -170,6 +150,4 @@ for f in "$OUT_DIR/miniprot.gtf" "$OUT_DIR/miniprot_trainingGenes.gff"; do
     [[ -f "$f" ]] || { echo "ERROR: expected output not found: $f"; exit 1; }
 done
 
-echo "[miniprot] Done."
-echo "[miniprot]   miniprot.gtf            : $(grep -c $'\t''transcript'$'\t' "$OUT_DIR/miniprot.gtf" || true) transcripts"
-echo "[miniprot]   miniprot_trainingGenes  : $(grep -c $'\t''transcript'$'\t' "$OUT_DIR/miniprot_trainingGenes.gff" || true) transcripts"
+echo "[ins_miniprot] Done."

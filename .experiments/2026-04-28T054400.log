@@ -1,0 +1,24 @@
+## tiberius_proteins_analysis — 2026-04-28
+
+### First attempt (failed — config.sh path resolution)
+7206850  brain  /home/gabriell/tiberius_proteins  bash run_all.sh  [FAILED: NonZeroExitCode — $(dirname "$0") resolves to SLURM spool, not repo dir]
+7206851  brain  /home/gabriell/tiberius_proteins  bash run_all.sh  [cancelled: DependencyNeverSatisfied]
+7206852  brain  /home/gabriell/tiberius_proteins  bash run_all.sh  [cancelled: DependencyNeverSatisfied]
+7206853  brain  /home/gabriell/tiberius_proteins  bash run_all.sh  [cancelled: DependencyNeverSatisfied]
+7206854  brain  /home/gabriell/tiberius_proteins  bash run_all.sh  [cancelled: DependencyNeverSatisfied]
+7206855  brain  /home/gabriell/tiberius_proteins  bash run_all.sh  [cancelled: DependencyNeverSatisfied]
+
+### Fix applied (attempt 2)
+Fix: replaced `source "$(dirname "$0")/../config.sh"` with `source "${REPO_DIR}/config.sh"` in all 6 slurm/*.sh
+Files changed: slurm/00_setup.sh, 01_filter_odb.sh, 02_extract_peptides.sh, 03_diamond.sh, 04_parse_labels.sh, 05_analyze.sh
+
+### Second attempt (running)
+7206865  brain  /home/gabriell/tiberius_proteins  bash run_all.sh  step=0 prot_setup  retry-of=7206850  reason=simple  fix=slurm/00_setup.sh+others
+7206866  brain  /home/gabriell/tiberius_proteins  bash run_all.sh  step=1 filter_odb array=0-11  depends=afterok:7206865
+7206867  brain  /home/gabriell/tiberius_proteins  bash run_all.sh  step=2 extract_pep array=0-3  independent
+7206868  brain  /home/gabriell/tiberius_proteins  bash run_all.sh  step=3 diamond array=0-11  depends=afterok:7206866,afterok:7206867
+7206869  brain  /home/gabriell/tiberius_proteins  bash run_all.sh  step=4 parse_labels array=0-3  independent
+7206870  brain  /home/gabriell/tiberius_proteins  bash run_all.sh  step=5 analyze array=0-11  depends=afterok:7206868,afterok:7206869
+
+### Expected outputs
+/home/gabriell/tiberius_proteins_analysis/analysis/  — precision/recall TSVs per (species, level)
