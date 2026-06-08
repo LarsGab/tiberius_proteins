@@ -11,9 +11,9 @@
 #   06 gffcmp    -> Tiberius vs miniprothint -> per-tx support class codes
 #   07 analyze   -> sweep filter rules -> PR-curve TSVs
 #
-# Step 00 (in the original slurm/) must already be done to populate
+# A vertebrates-specific setup job runs first to populate
 #   $WORK_DIR/odb/raw/Vertebrata.fa.gz  and  $WORK_DIR/odb/nodes.dmp.
-# This script does NOT re-download those.
+# It is idempotent: if both files already exist on disk it exits immediately.
 #
 # Run from the repo root on the cluster:
 #   bash run_vertebrates_test.sh
@@ -35,6 +35,12 @@ submit() {
 # --partition=vision in its #SBATCH header.
 PART="--partition=pinky,snowball"
 
+echo "=== Setup (vertebrates_test): Download Vertebrata ODB + nodes.dmp ==="
+JIDS=$(submit $PART \
+    --output="$WORK_DIR/logs/vt_setup_%j.log" \
+    "$REPO_DIR/slurm/vertebrates_test/setup.sh")
+echo "  Job ID: $JIDS"
+
 echo "=== Step 00 (vertebrates_test): Download RefSeq genomes ==="
 JID0=$(submit $PART \
     --output="$WORK_DIR/logs/vt_00_download_%A_%a.log" \
@@ -50,6 +56,7 @@ echo "  Job ID: $JID1"
 
 echo "=== Step 02 (vertebrates_test): Filter ODB Vertebrata at order level ==="
 JID2=$(submit $PART \
+    --dependency=afterok:"$JIDS" \
     --output="$WORK_DIR/logs/vt_02_filter_odb_%A_%a.log" \
     "$REPO_DIR/slurm/vertebrates_test/02_filter_odb.sh")
 echo "  Job ID: $JID2"
