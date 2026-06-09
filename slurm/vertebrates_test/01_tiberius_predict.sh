@@ -13,7 +13,10 @@
 # writes the GTF to the layout that the rest of the pipeline expects:
 #   $BENCH_DIR/paper/$CLADE/$SPECIES/results/predictions/tiberius/tiberius_seqlen.gtf
 #
-# Uses the Tiberius launcher (tiberius.py) inside Singularity.
+# Uses the locally installed Tiberius at $TIBERIUS_REPO (no Singularity), to
+# avoid the --nvccli/singularity.conf mismatch on some `vision` nodes. All
+# Tiberius runtime deps (TF with GPU, etc.) must be available in the
+# `orffinder` micromamba env.
 
 set -euo pipefail
 source /etc/profile.d/modules.sh
@@ -42,14 +45,11 @@ fi
 
 mkdir -p "$OUT_DIR"
 
-# Tiberius launcher invokes Singularity itself when given --singularity, so we
-# do not wrap it in `singularity exec` here. The launcher needs Python with the
-# tiberius package installed; activate the orffinder micromamba env (per memory).
+# Activate the orffinder micromamba env (Tiberius + TF GPU deps must be here).
 eval "$(micromamba shell hook --shell bash)"
 micromamba activate orffinder
 
 python "$TIBERIUS_LAUNCHER" \
-    --singularity \
     --genome     "$GENOME" \
     --model_cfg  "$TIBERIUS_MODEL_CFG" \
     --out        "$OUT_GTF"
