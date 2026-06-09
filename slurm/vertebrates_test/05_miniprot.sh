@@ -67,12 +67,12 @@ if [[ ! -f "$PREPROCESSED_FA" ]]; then
         DIAMOND_DB="$OUT_DIR/prot_db"
         DIAMOND_HITS="$OUT_DIR/diamond_preprocess.tsv"
 
-        diamond makedb \
+        run_tool diamond makedb \
             --in "$PROTEINS" \
             --db "$DIAMOND_DB" \
             --threads "$MINIPROT_THREADS"
 
-        diamond blastp \
+        run_tool diamond blastp \
             --query "$TIBERIUS_PEPTIDES" \
             --db "${DIAMOND_DB}.dmnd" \
             --out "$DIAMOND_HITS" \

@@ -10,6 +10,8 @@
 # for the Diamond preprocessing step inside 05_miniprot.sh.
 
 set -euo pipefail
+source /etc/profile.d/modules.sh
+module load singularity/3.11.3
 source "${REPO_DIR}/config_vertebrates_test.sh"
 
 SPECIES="${VERTEBRATES_SPECIES_LIST[$SLURM_ARRAY_TASK_ID]}"
@@ -30,8 +32,16 @@ done
 
 mkdir -p "$(dirname "$OUT")"
 
+run_tool() {
+    if [[ -n "${TIBERIUS_SIF:-}" ]]; then
+        singularity exec "$TIBERIUS_SIF" "$@"
+    else
+        "$@"
+    fi
+}
+
 # -y translate CDS to protein. Strip stop-codon * and gffread mask '.'
-gffread -y /dev/stdout -g "$GENOME" "$GTF" \
+run_tool gffread -y /dev/stdout -g "$GENOME" "$GTF" \
     | sed -e 's/\*//g' -e '/^>/!s/\.//g' \
     > "$OUT"
 
