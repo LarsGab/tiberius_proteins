@@ -50,6 +50,8 @@ from filter_genes_by_proteins import (  # noqa: E402
 )
 
 
+from dataclasses import dataclass
+
 _SCI_NOTATION_HINT = ("e", "E")
 
 
@@ -95,30 +97,111 @@ def detect_evalue_col(diamond_tsv: Path, scan_lines: int = 50) -> int:
     return best_idx
 
 
+@dataclass
+class ColLayout:
+    """0-based column indices in the Diamond TSV.
+
+    Both common Diamond outfmt 6 variants are handled with the same offsets
+    from the e-value column:
+        14-col extended : pident=2 length=3  evalue=10 bitscore=11 qlen=12 slen=13
+        8-col compact   : pident=2 length=3  evalue=4  bitscore=5  qlen=6  slen=7
+    bitscore = evalue+1, qlen = evalue+2, slen = evalue+3 in both layouts.
+    """
+    pident:   int
+    length:   int
+    evalue:   int
+    bitscore: int
+    qlen:     int  # -1 if not present
+    slen:     int  # -1 if not present
+
+    @classmethod
+    def from_evalue_col(cls, evalue_col: int, n_cols: int) -> "ColLayout":
+        bitscore = evalue_col + 1 if evalue_col + 1 < n_cols else -1
+        qlen     = evalue_col + 2 if evalue_col + 2 < n_cols else -1
+        slen     = evalue_col + 3 if evalue_col + 3 < n_cols else -1
+        return cls(pident=2, length=3, evalue=evalue_col,
+                   bitscore=bitscore, qlen=qlen, slen=slen)
+
+
+@dataclass
+class HitFilter:
+    """Per-hit thresholds. A hit passes iff ALL active thresholds are met."""
+    pident_min:   float = 0.0
+    qcov_min:     float = 0.0
+    tcov_min:     float = 0.0
+    evalue_max:   float = float("inf")
+    bitscore_min: float = 0.0
+    length_min:   int   = 0
+
+    def describe(self) -> str:
+        p = []
+        if self.pident_min   > 0:            p.append(f"pident>={self.pident_min:g}")
+        if self.qcov_min     > 0:            p.append(f"qcov>={self.qcov_min:g}")
+        if self.tcov_min     > 0:            p.append(f"tcov>={self.tcov_min:g}")
+        if self.evalue_max   < float("inf"): p.append(f"evalue<={self.evalue_max:g}")
+        if self.bitscore_min > 0:            p.append(f"bitscore>={self.bitscore_min:g}")
+        if self.length_min   > 0:            p.append(f"length>={self.length_min}")
+        return ", ".join(p) if p else "any-hit"
+
+
 def transcripts_with_hit(
     diamond_tsv: Path,
-    evalue_max: float,
-    evalue_col: int,
-) -> set[str]:
-    """Return the set of query (transcript) IDs with any hit at evalue <= max.
-
-    `evalue_col` is the 0-based column index of the e-value.
-    """
+    flt: HitFilter,
+    layout: ColLayout,
+) -> tuple[set[str], int, int]:
+    """Return (supported_qids, n_rows_seen, n_rows_passing)."""
     keep: set[str] = set()
+    n_rows = n_pass = 0
     with open(diamond_tsv) as fh:
         for line in fh:
             if not line.strip() or line.startswith("#"):
                 continue
             cols = line.rstrip("\n").split("\t")
-            if len(cols) <= evalue_col:
+            if len(cols) <= layout.evalue:
                 continue
+            n_rows += 1
             try:
-                evalue = float(cols[evalue_col])
-            except ValueError:
+                pident = float(cols[layout.pident])
+                length = int(cols[layout.length])
+                evalue = float(cols[layout.evalue])
+                bitscore = (float(cols[layout.bitscore])
+                            if layout.bitscore >= 0 else 0.0)
+            except (ValueError, IndexError):
                 continue
-            if evalue <= evalue_max:
-                keep.add(cols[0])
-    return keep
+
+            if pident   < flt.pident_min:   continue
+            if evalue   > flt.evalue_max:   continue
+            if bitscore < flt.bitscore_min: continue
+            if length   < flt.length_min:   continue
+
+            if flt.qcov_min > 0:
+                if layout.qlen < 0:
+                    sys.exit("ERROR: --qcov-min set but qlen column not "
+                             "present in TSV. Run Diamond with qlen in "
+                             "--outfmt, or drop --qcov-min.")
+                try:
+                    qlen = int(cols[layout.qlen])
+                except (ValueError, IndexError):
+                    continue
+                qcov = length / qlen * 100.0 if qlen > 0 else 0.0
+                if qcov < flt.qcov_min:
+                    continue
+
+            if flt.tcov_min > 0:
+                if layout.slen < 0:
+                    sys.exit("ERROR: --tcov-min set but slen column not "
+                             "present in TSV.")
+                try:
+                    slen = int(cols[layout.slen])
+                except (ValueError, IndexError):
+                    continue
+                tcov = length / slen * 100.0 if slen > 0 else 0.0
+                if tcov < flt.tcov_min:
+                    continue
+
+            keep.add(cols[0])
+            n_pass += 1
+    return keep, n_rows, n_pass
 
 
 def gene_to_transcripts(gtf: Path) -> dict[str, set[str]]:
@@ -157,14 +240,40 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                     help="Pre-computed Diamond blastp TSV (outfmt 6). "
                          "If given, --genome/--proteins are ignored.")
 
-    # Filtering
-    ap.add_argument("--evalue", type=float, default=1e-5,
-                    help="Max e-value for a hit to count as support (default 1e-5)")
-    ap.add_argument("--evalue-col", type=int, default=None,
-                    help="1-based column index of e-value in the Diamond TSV. "
-                         "If omitted, auto-detected by scanning for sci notation "
-                         "(works for the default 12-col outfmt 6 and most "
-                         "custom layouts).")
+    # Filtering thresholds
+    flt = ap.add_argument_group("filter thresholds (a hit counts as 'support' "
+                                "iff ALL active thresholds are met)")
+    flt.add_argument("--evalue",       type=float, default=1e-5,
+                     help="Max e-value (default 1e-5)")
+    flt.add_argument("--pident-min",   type=float, default=0.0,
+                     help="Min %% identity, 0-100 (default 0 = off)")
+    flt.add_argument("--qcov-min",     type=float, default=0.0,
+                     help="Min query coverage in %% (length/qlen*100). "
+                          "Requires qlen column in TSV. Default 0 = off.")
+    flt.add_argument("--tcov-min",     type=float, default=0.0,
+                     help="Min target coverage in %% (length/slen*100). "
+                          "Requires slen column in TSV. Default 0 = off.")
+    flt.add_argument("--bitscore-min", type=float, default=0.0,
+                     help="Min bitscore (default 0 = off)")
+    flt.add_argument("--length-min",   type=int,   default=0,
+                     help="Min alignment length (default 0 = off)")
+
+    # Column overrides (auto-detected for evalue; bitscore/qlen/slen are
+    # inferred as evalue+1/+2/+3)
+    cols = ap.add_argument_group("column overrides (1-based)")
+    cols.add_argument("--evalue-col",   type=int, default=None,
+                      help="If omitted, auto-detected by scanning for sci "
+                           "notation.")
+    cols.add_argument("--pident-col",   type=int, default=3,
+                      help="Default 3 (Diamond convention).")
+    cols.add_argument("--length-col",   type=int, default=4,
+                      help="Default 4 (Diamond convention).")
+    cols.add_argument("--bitscore-col", type=int, default=None,
+                      help="Default: evalue-col + 1.")
+    cols.add_argument("--qlen-col",     type=int, default=None,
+                      help="Default: evalue-col + 2 if present.")
+    cols.add_argument("--slen-col",     type=int, default=None,
+                      help="Default: evalue-col + 3 if present.")
 
     # Diamond knobs (only used in mode A)
     ap.add_argument("--threads", type=int, default=8)
@@ -204,15 +313,42 @@ def main(argv: list[str] | None = None) -> int:
         diamond_tsv = args.diamond_tsv
         print(f"Using pre-computed Diamond TSV: {diamond_tsv}", flush=True)
 
+    # Resolve columns (CLI is 1-based; layout is 0-based)
     if args.evalue_col is None:
         evalue_col = detect_evalue_col(diamond_tsv)
         print(f"Auto-detected e-value column: {evalue_col + 1} (1-based)",
               flush=True)
     else:
-        evalue_col = args.evalue_col - 1  # CLI is 1-based
+        evalue_col = args.evalue_col - 1
 
-    print(f"Loading hits at evalue <= {args.evalue:g}", flush=True)
-    supported_tids = transcripts_with_hit(diamond_tsv, args.evalue, evalue_col)
+    # Peek at first data row to know how many columns we have
+    n_cols = 0
+    with open(diamond_tsv) as fh:
+        for line in fh:
+            if line.strip() and not line.startswith("#"):
+                n_cols = len(line.rstrip("\n").split("\t"))
+                break
+    layout = ColLayout.from_evalue_col(evalue_col, n_cols)
+    layout.pident = args.pident_col - 1
+    layout.length = args.length_col - 1
+    if args.bitscore_col is not None: layout.bitscore = args.bitscore_col - 1
+    if args.qlen_col     is not None: layout.qlen     = args.qlen_col - 1
+    if args.slen_col     is not None: layout.slen     = args.slen_col - 1
+
+    flt = HitFilter(
+        pident_min   = args.pident_min,
+        qcov_min     = args.qcov_min,
+        tcov_min     = args.tcov_min,
+        evalue_max   = args.evalue,
+        bitscore_min = args.bitscore_min,
+        length_min   = args.length_min,
+    )
+    print(f"Filter: {flt.describe()}", flush=True)
+    supported_tids, n_rows, n_pass = transcripts_with_hit(
+        diamond_tsv, flt, layout,
+    )
+    print(f"  rows scanned : {n_rows:,}", flush=True)
+    print(f"  rows passing : {n_pass:,}", flush=True)
 
     gene_tids = gene_to_transcripts(args.gtf)
     n_genes_total = len(gene_tids)
@@ -245,8 +381,25 @@ def main(argv: list[str] | None = None) -> int:
             "proteins":    str(args.proteins) if args.proteins else None,
             "diamond_tsv": str(diamond_tsv),
         },
-        "evalue_max": args.evalue,
-        "evalue_col": evalue_col + 1,  # 1-based for readability
+        "filter": {
+            "describe":     flt.describe(),
+            "evalue_max":   flt.evalue_max,
+            "pident_min":   flt.pident_min,
+            "qcov_min":     flt.qcov_min,
+            "tcov_min":     flt.tcov_min,
+            "bitscore_min": flt.bitscore_min,
+            "length_min":   flt.length_min,
+        },
+        "columns_1based": {
+            "pident":   layout.pident + 1,
+            "length":   layout.length + 1,
+            "evalue":   layout.evalue + 1,
+            "bitscore": layout.bitscore + 1 if layout.bitscore >= 0 else None,
+            "qlen":     layout.qlen + 1     if layout.qlen     >= 0 else None,
+            "slen":     layout.slen + 1     if layout.slen     >= 0 else None,
+        },
+        "diamond_rows_scanned": n_rows,
+        "diamond_rows_passing": n_pass,
         "result": {
             "n_genes_total":         n_genes_total,
             "n_genes_kept":          len(kept_genes),
