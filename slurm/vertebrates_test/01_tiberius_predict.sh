@@ -4,7 +4,7 @@
 #SBATCH --partition=vision
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
+#SBATCH --mem=120G
 #SBATCH --time=72:00:00
 #SBATCH --output=logs/vt_01_tiberius_%A_%a.log
 
@@ -52,7 +52,6 @@ python "$TIBERIUS_LAUNCHER" \
     --singularity \
     --genome     "$GENOME" \
     --model_cfg  "$TIBERIUS_MODEL_CFG" \
-    --batch_size "$TIBERIUS_BATCH_SIZE" \
     --out        "$OUT_GTF"
 
 [[ -s "$OUT_GTF" ]] || { echo "ERROR: Tiberius produced no GTF"; exit 2; }
