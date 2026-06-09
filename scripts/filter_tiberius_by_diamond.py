@@ -50,23 +50,74 @@ from filter_genes_by_proteins import (  # noqa: E402
 )
 
 
-def transcripts_with_hit(diamond_tsv: Path, evalue_max: float) -> set[str]:
-    """Return the set of query (transcript) IDs with any hit at evalue <= max."""
+_SCI_NOTATION_HINT = ("e", "E")
+
+
+def _looks_like_evalue(tok: str) -> bool:
+    """A token is e-value-like if it parses as float AND uses sci notation."""
+    if not any(c in tok for c in _SCI_NOTATION_HINT):
+        return False
+    try:
+        float(tok)
+    except ValueError:
+        return False
+    return True
+
+
+def detect_evalue_col(diamond_tsv: Path, scan_lines: int = 50) -> int:
+    """Return the 0-based column index that looks like the e-value column.
+
+    Heuristic: find the column whose tokens consistently use scientific
+    notation (e.g. '1e-5', '3.33e-239'). Diamond writes bitscore as a plain
+    number, so this uniquely identifies e-value across common outfmt 6
+    variants (default 12-col -> idx 10; custom layouts -> different idx).
+    """
+    counts: dict[int, int] = {}
+    n_lines = 0
+    with open(diamond_tsv) as fh:
+        for line in fh:
+            if not line.strip() or line.startswith("#"):
+                continue
+            cols = line.rstrip("\n").split("\t")
+            for i, tok in enumerate(cols):
+                if _looks_like_evalue(tok):
+                    counts[i] = counts.get(i, 0) + 1
+            n_lines += 1
+            if n_lines >= scan_lines:
+                break
+    if not counts:
+        raise ValueError(
+            f"Could not auto-detect e-value column in {diamond_tsv}. "
+            "Pass --evalue-col explicitly (1-based)."
+        )
+    # Column with the most sci-notation tokens wins; tiebreak on lowest index.
+    best_idx = max(counts, key=lambda i: (counts[i], -i))
+    return best_idx
+
+
+def transcripts_with_hit(
+    diamond_tsv: Path,
+    evalue_max: float,
+    evalue_col: int,
+) -> set[str]:
+    """Return the set of query (transcript) IDs with any hit at evalue <= max.
+
+    `evalue_col` is the 0-based column index of the e-value.
+    """
     keep: set[str] = set()
     with open(diamond_tsv) as fh:
         for line in fh:
             if not line.strip() or line.startswith("#"):
                 continue
             cols = line.rstrip("\n").split("\t")
-            if len(cols) < 11:
+            if len(cols) <= evalue_col:
                 continue
-            qseqid = cols[0]
             try:
-                evalue = float(cols[10])
+                evalue = float(cols[evalue_col])
             except ValueError:
                 continue
             if evalue <= evalue_max:
-                keep.add(qseqid)
+                keep.add(cols[0])
     return keep
 
 
@@ -109,6 +160,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # Filtering
     ap.add_argument("--evalue", type=float, default=1e-5,
                     help="Max e-value for a hit to count as support (default 1e-5)")
+    ap.add_argument("--evalue-col", type=int, default=None,
+                    help="1-based column index of e-value in the Diamond TSV. "
+                         "If omitted, auto-detected by scanning for sci notation "
+                         "(works for the default 12-col outfmt 6 and most "
+                         "custom layouts).")
 
     # Diamond knobs (only used in mode A)
     ap.add_argument("--threads", type=int, default=8)
@@ -148,8 +204,15 @@ def main(argv: list[str] | None = None) -> int:
         diamond_tsv = args.diamond_tsv
         print(f"Using pre-computed Diamond TSV: {diamond_tsv}", flush=True)
 
+    if args.evalue_col is None:
+        evalue_col = detect_evalue_col(diamond_tsv)
+        print(f"Auto-detected e-value column: {evalue_col + 1} (1-based)",
+              flush=True)
+    else:
+        evalue_col = args.evalue_col - 1  # CLI is 1-based
+
     print(f"Loading hits at evalue <= {args.evalue:g}", flush=True)
-    supported_tids = transcripts_with_hit(diamond_tsv, args.evalue)
+    supported_tids = transcripts_with_hit(diamond_tsv, args.evalue, evalue_col)
 
     gene_tids = gene_to_transcripts(args.gtf)
     n_genes_total = len(gene_tids)
@@ -183,6 +246,7 @@ def main(argv: list[str] | None = None) -> int:
             "diamond_tsv": str(diamond_tsv),
         },
         "evalue_max": args.evalue,
+        "evalue_col": evalue_col + 1,  # 1-based for readability
         "result": {
             "n_genes_total":         n_genes_total,
             "n_genes_kept":          len(kept_genes),
