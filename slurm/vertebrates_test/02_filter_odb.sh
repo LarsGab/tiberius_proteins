@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=vt_filter_odb
-#SBATCH --array=0-5
+#SBATCH --array=0-8
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=20G
 #SBATCH --time=03:00:00
 #SBATCH --output=logs/vt_02_filter_odb_%A_%a.log
 
-# 6 tasks: one per vertebrate test species (order level only).
+# 9 tasks: one per vertebrate test species (order level only).
 # Uses the Vertebrata ODB partition + nodes.dmp downloaded by the original
 # slurm/00_setup.sh — re-run that first if those are missing.
 

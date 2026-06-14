@@ -12,8 +12,9 @@ REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 source "$REPO_DIR/config.sh"
 
 # ── Species list ──────────────────────────────────────────────────────────────
-# All 6 use the Vertebrata ODB partition and are placed under
-# $BENCH_DIR/Vertebrata/<species>/ on the cluster.
+# All species use the Vertebrata ODB partition. Genomes are now staged by the
+# tiberius_orf_finder pipeline at:
+#   $VERTEBRATES_ASSEMBLY_DIR/<species>/assembly/genome.fa
 VERTEBRATES_SPECIES_LIST=(
     "Archocentrus_centrarchus"
     "Betta_splendens"
@@ -21,6 +22,9 @@ VERTEBRATES_SPECIES_LIST=(
     "Pristiophorus_japonicus"
     "Takifugu_rubripes"
     "Zootoca_vivipara"
+    "Bos_taurus"
+    "Delphinapterus_leucas"
+    "Homo_sapiens"
 )
 
 # NCBI RefSeq accessions (from species_vertebrates_test.csv)
@@ -31,7 +35,13 @@ declare -A VERTEBRATES_ACCESSION=(
     [Pristiophorus_japonicus]="GCF_044704955.1"
     [Takifugu_rubripes]="GCF_901000725.2"
     [Zootoca_vivipara]="GCF_963506605.1"
+    [Bos_taurus]="GCF_002263795.3"
+    [Delphinapterus_leucas]="GCF_002288925.2"
+    [Homo_sapiens]="GCF_000001405.40"
 )
+
+# Restructured genome layout (tiberius_orf_finder Nextflow output)
+VERTEBRATES_ASSEMBLY_DIR="${VERTEBRATES_ASSEMBLY_DIR:-/home/gabriell/tiberius_orf_finder/results/vertebrates_test}"
 
 # Add ODB partition + clade entries for each species
 for SP in "${VERTEBRATES_SPECIES_LIST[@]}"; do
@@ -50,6 +60,9 @@ declare -A VERTEBRATES_ORDER_TAXON=(
     [Pristiophorus_japonicus]=7779       # Pristiophoriformes (or Squaliformes) VERIFY
     [Takifugu_rubripes]=31022            # Tetraodontiformes VERIFY
     [Zootoca_vivipara]=8509              # Squamata          VERIFY
+    [Bos_taurus]=91561                   # Artiodactyla (Cetartiodactyla) VERIFY
+    [Delphinapterus_leucas]=91561        # Artiodactyla (Cetacea is infraorder under it) VERIFY
+    [Homo_sapiens]=9443                  # Primates          VERIFY
 )
 
 # Populate EXCL_TAXON for the order level only (LEVEL 2)
